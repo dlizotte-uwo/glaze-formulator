@@ -1,5 +1,5 @@
 # Glaze Formulator: Computes a glaze recipe given a Unity Molecular Formula
-# and a list of ingredients.
+# and a list of materials
 #     Copyright (C) 2018  Daniel J. Lizotte
 # 
 # This program is free software: you can redistribute it and/or modify
@@ -13,12 +13,16 @@
 # GNU General Public License for more details.
 
 library(dplyr)
+library(readr)
 library(shiny)
 library(shinyjs)
 library(quadprog)
 #library(nnls)
 #library(numDeriv)
 source("range-input.R")
+
+# Max uploadable recipe 64k
+options(shiny.maxRequestSize = 64*1024)
 
 # Style information: Interface colours for oxides, get form-groups to display as inline-block.
 oxide.colour.styles <- HTML("\
@@ -95,12 +99,15 @@ oxide.colour.styles <- HTML("\
 #Columns are oxides + LOI (percentages by mass)
 #Rows are materials
 materials <- readxl::read_excel("materials.xlsx")
-#Missing values are actually zero
-materials[is.na(materials)] <- 0
+
+material_index <- materials$ID
+names(material_index) = materials$Ingredient
 
 #Create matrix by removing non-numeric columns and transposing
 #Remove headers, transpose
 materials_wt_matrix <- t(materials[,c(-1,-2,-3)])
+#Missing values are actually zero
+materials_wt_matrix[is.na(materials_wt_matrix)] <- 0
 #Columns are now ingredients
 colnames(materials_wt_matrix) <- materials$Ingredient
 
@@ -151,7 +158,7 @@ glazeRecipes <- function(targ, form, infl = setNames(rep(1, length(targ)), oxide
   # these may be in different order from oxides in the model data
   
   #Set target in the materials_mol data frame to the given target molecular formula
-  #Set influnces as well
+  #Set influences as well
   #This ensures that oxides "line up" properly if they're given out of order
 
   materials_mol$Target = 0
@@ -364,13 +371,21 @@ myCheckboxInput <- function (inputId, label, value = FALSE, width = NULL)
 }
 
 # Function that creates a UI for the given "oxide" in the unity formula.
-oxideInput <- function (inputId, label, value, min = NA, max = NA, step = NA, type = "FluxR2O", width = NULL) 
+oxideInput <- function (inputId, label, value, min = NA, max = NA, step = NA, type = "FluxR2O", width = NULL, readonly = FALSE) 
 {
   value <- restoreInput(id = inputId, default = value)
 
-  inputTag <- tags$input(id = inputId, type = "number", class = "form-control", 
-                         style = "display: inline-block; width: 6em; height: 2.1em; vertical-align: middle", 
-                         value = formatNoSci(value))
+  if(readonly) {
+    inputTag <- disabled(tags$input(id = inputId, type = "number", class = "form-control", 
+                           style = "display: inline-block; width: 6em; height: 2.1em; vertical-align: middle", 
+                           value = formatNoSci(value)))
+    
+  } else {
+    inputTag <- tags$input(id = inputId, type = "number", class = "form-control", 
+                           style = "display: inline-block; width: 6em; height: 2.1em; vertical-align: middle", 
+                           value = formatNoSci(value))
+  }
+  
   if (!is.na(min)) 
     inputTag$attribs$min = min
   if (!is.na(max)) 
@@ -409,11 +424,11 @@ ui <- function(request) {
     tags$style(type = "text/css","@import url('https://fonts.googleapis.com/css?family=Montserrat:400,700');\n* {font-family: Montserrat,'Helvetica Neue',sans-serif;}"),
     title = "Glaze Formulator",
     tags$h1("The Glaze Formulator", style = "margin-top: 5px; margin-bottom: 5px;"), 
-    HTML('<p>Welcome to the Glaze Formulator! This application will take a target <a href="https://www.google.com/search?q=unity+molecular+formula" target="_blank">unity molecular formula</a> 
-           together with a list of ingredients to use, and it will produce a glaze recipe that approximates the target unity formula as closely as possible.
+    HTML('<p>Welcome to the Glaze Formulator! This application will take a target <a href="http://help.glazy.org/concepts/analysis/umf.html" target="_blank">unity molecular formula</a> 
+           together with a list of materials to use, and it will produce a glaze recipe that approximates the target unity formula as closely as possible.
            Enter your desired target formula in the boxes under <b>Unity Formula</b> (there is a simple example formula to start from), then choose the materials you want 
-           using the box under <b>Materials</b> (you can type to search). Your recipe will appear under <b>Recipe</b>, and its unity formula will appear under <b>Actual</b>. 
-           Large discrepancies between the <b>Target</b> unity formula and the <b>Actual</b> unity formula will be highlighted. You can approximate the example unity formula pretty well 
+           using the box under <b>Materials</b> (you can type to search). Alternatively, you can upload a GlazeChem file to set the targets and the materials. You can export a GlazeChem file from Glazy. Your recipe will appear under <b>Recipe</b>, and its unity formula will appear under <b>Actual</b>. 
+           Large discrepancies between the <b>Target</b> unity formula and the <b>Actual</b> unity formula will be marked with a coloured box. You can approximate the example unity formula pretty well 
            with EPK, Silica, Frit 3134, Neph Sy, and Whiting. Give it a try.</p>'),
     tags$hr(style = "margin-top: 0px; margin-bottom:3px;"),
     # Inputs (Unity formula) on the left, Materials/ingredient choices in the middle, recipe on the right.
@@ -437,23 +452,30 @@ ui <- function(request) {
                                   span("Target", style = "display: inline-block; text-align: center; width: 6em; font-weight: 700;"),
                                   span("Actual", style = "padding-left: 5px; font-weight: 700;")))),
                 tags$hr(style = "margin-top: 0px; margin-bottom:3px;"),
-                lapply(1:length(oxides), function(i) {
-                oxideInput(inputId = oxides[i], label = oxides[i], type = oxidetypes[i], width="60em",
-                value = initialvalues[i], min = 0, step = 0.01)})
+                lapply(1:3, function(i) {
+                  oxideInput(inputId = oxides[i], label = oxides[i], type = oxidetypes[i], width="60em",
+                  value = initialvalues[i], min = 0, step = 0.01)}),
+                oxideInput(inputId = "KNaO", label = "KNaO", type = "None", width="60em",
+                            value = initialvalues[2] + initialvalues[3], min = 0, step = 0.01, readonly = TRUE),
+                lapply(4:length(oxides), function(i) {
+                  oxideInput(inputId = oxides[i], label = oxides[i], type = oxidetypes[i], width="60em",
+                  value = initialvalues[i], min = 0, step = 0.01)}),
       ),
       column(3, tags$h2("Materials"),
                 tags$hr(style = "margin-top: 0px; margin-bottom:3px;"),
-                selectInput(label = "Choose Materials", inputId = "Materials", choices = colnames(materials_mol), width="100%", multiple = TRUE)
-             ),
+                selectInput(label = "Choose Materials", inputId = "Materials", choices = colnames(materials_mol), width="100%", multiple = TRUE),
+                fileInput(inputId = 'RecipeFile', 'Optional: Upload a GlazeChem file',
+                  accept = c('text/plain','.txt')),
+                tags$h5(htmlOutput(outputId = "FileWarnings", inline = TRUE), style = "color: #f57c00;")),
       column(4, tags$h2(textOutput(outputId = "RecipeHeader", inline = TRUE)),
-             tags$hr(style = "margin-top: 0px; margin-bottom:3px;"),
-             textInput(inputId = "RecipeName", label="Recipe Name", width = "100%"),
-             tags$h4(textOutput(outputId = "RecipeStatus", inline = TRUE), style = "color: #f57c00;"),
-             tags$h4(textOutput(outputId = "TargetStatus", inline = TRUE), style = "color: #f57c00;"),
-             uiOutput("Recipe"),
-             tags$hr(style = "margin-top: 0px; margin-bottom:3px;"),
-             tags$br(),
-             bookmarkButton())),
+                tags$hr(style = "margin-top: 0px; margin-bottom:3px;"),
+                textInput(inputId = "RecipeName", label="Recipe Name", width = "100%"),
+                tags$h4(textOutput(outputId = "RecipeStatus", inline = TRUE), style = "color: #f57c00;"),
+                tags$h4(textOutput(outputId = "TargetStatus", inline = TRUE), style = "color: #f57c00;"),
+                uiOutput("Recipe"),
+                tags$hr(style = "margin-top: 0px; margin-bottom:3px;"),
+                tags$br(),
+                bookmarkButton())),
       tags$hr(),
       HTML("<p><b>For advanced users:</b> Sometimes, a perfect approximation is not possible with a given collection of materials. 
            In that case, a compromise must be made. For example, if you try to approximate 
@@ -485,6 +507,65 @@ exactRound <- function(v, digits, total = 1) {
 # Main server code
 server <- function(input, output, session) {
   
+  # React to file upload by setting recipe components and UMF.
+  observeEvent(input$RecipeFile,{
+    # Try to extract recipe ID from filename
+    recipe_id <- as.numeric(sub("Glazy_ID_(.*)_.*", "\\1",input$RecipeFile$name))
+    
+    recipe_info <- read_delim(input$RecipeFile$datapath, "=", 
+                              col_names = FALSE, trim_ws = TRUE,
+                              escape_double = FALSE, escape_backslash = TRUE)
+    # print(recipe_info)
+    recipe_name <- recipe_info$X2[recipe_info$X1 == "name"]
+    updateTextInput(session, inputId = "RecipeName", value = recipe_name)
+    material_rows = which(recipe_info$X1 == "component")
+    all_materials = NULL
+    all_amounts = NULL
+    for(rownum in material_rows) {
+      if(recipe_info$X1[rownum+1] == "amount") {
+        # This material is part of the main recipe (not an "additive")
+        material_name = recipe_info$X2[rownum]
+        material_amount = as.numeric(recipe_info$X2[rownum+1])
+        all_materials <- append(all_materials, material_name);
+        all_amounts <- append(all_amounts, material_amount)
+      }
+    }
+    
+    # Could not find any materials in the file
+    if(is.null(all_materials)) {
+      output$FileWarnings <- renderText("Unable to read file.")
+      return()
+    }
+    
+    missing_materials <- setdiff(all_materials, colnames(materials_mol_matrix))
+    # There are materials in the file that are not in our data
+    if(length(missing_materials) > 0) {
+      print(paste("Materials Missing:",missing_materials))
+      print(missing_materials)
+      output$FileWarnings <- renderText(paste0("Unknown Materials: ",paste(missing_materials,collapse=", ")))
+      return()
+    } else {
+      output$FileWarnings <- renderText("")
+    }
+    
+    # Clear KNaOBox
+    updateCheckboxInput(session, inputId="KNaOBox", value = FALSE)
+    # Set targets to unity formula for this recipe
+    recipe_targets_unnorm <- materials_mol_matrix[,all_materials] %*% all_amounts
+    recipe_targets <- recipe_targets_unnorm / sum(recipe_targets_unnorm[fluxes,])
+    recipe_targets[fluxes,] <- exactRound(recipe_targets[fluxes,],4,1)
+    recipe_targets <- round(recipe_targets,4)
+    lapply(oxides, function(o) updateNumericInput(session, o, value = recipe_targets[[o,1]]))
+    
+    # Set materials to materials for this recipe
+    updateSelectInput(session, inputId="Materials", selected=all_materials)
+    
+    if(recipe_id > 0) {
+      recipe_url = paste0("https://glazy.org/recipes/", recipe_id)
+      output$FileWarnings <- renderUI({a(recipe_url, href=recipe_url, target="_blank")})
+    }
+  })
+  
   # Reactive variable that gets the desired influence of each oxide from the sliders
   influences <- debounce(reactive({
     t <- sapply(seq(length(oxides)), function(i) as.numeric(input[[paste0(oxides[i], "Influence")]]))
@@ -511,6 +592,13 @@ server <- function(input, output, session) {
   
   # Reactive variable that is sum of target fluxes. Used to watch for non-normalized inputs.
   targetFluxSum <- reactive(sum(targetOxides()[fluxIndices]))
+  
+  # Reactive variable that is sum of target K2O and Na2O
+  targetKNaO <- reactive(targetOxides()[[2]] + targetOxides()[[3]]) # K + Na
+  # Keep KNaO "input" up-to-date
+  observe({
+    updateNumericInput(session, "KNaO", value = targetKNaO())
+  })
   
   # Watch the targetFluxSum, change label of the Normalize Fluxes button if inputs become unnormalized.
   observe(
@@ -589,7 +677,7 @@ server <- function(input, output, session) {
       }
     } else {
       if(is.null(input$Materials)) {
-        output$RecipeStatus <- renderText("Select materials to compute recipe.")
+        output$RecipeStatus <- renderText("Select materials or upload a file to compute recipe.")
       } else if (all(influences() == 0)) {
         output$RecipeStatus <- renderText("At least one influence must be non-zero.")
       }
@@ -602,6 +690,8 @@ server <- function(input, output, session) {
   
   # Update the actual unity formula of the recipe if it changes
   lapply(oxides, function(ox) { output[[paste0(ox, "Result")]] <- renderText(if(is.null(recipe())) "" else recipe()[[1]]$unity[[ox]]) })
+  # Update combined KNaO box
+  output$KNaOResult <- renderText(if(is.null(recipe())) "" else recipe()[[1]]$unity[["K2O"]] + recipe()[[1]]$unity[["Na2O"]])
   
   # Set the borders of the displayed unity formula to reflect errors.
   # If oxide is above target, colour is red. If below, colour is cyan.
@@ -609,10 +699,15 @@ server <- function(input, output, session) {
               jsCommand <- ""
               if(!is.null(recipe())) {
                 #Compute errors and display, along with coloured borders
-                for(o in oxides) {
+                for(o in c(oxides,"KNaO")) {
                  oResult <- paste0(o, "Result")
-                 u <- recipe()[[1]]$unity[o]
-                 t <- recipe()[[1]]$target[o]
+                 if(o != "KNaO") {
+                   u <- recipe()[[1]]$unity[o]
+                   t <- recipe()[[1]]$target[o]
+                 } else {
+                   u <- recipe()[[1]]$unity["K2O"] + recipe()[[1]]$unity["Na2O"]
+                   t <- recipe()[[1]]$target["K2O"] + recipe()[[1]]$target["Na2O"]
+                 }
                  # Convert errors to colour. This is subjective.
                  err = (u - t)
                  err1 <- abs(err / (u + t + 0.01))*(abs(err) > 0.01)*sign(err)
@@ -635,11 +730,16 @@ server <- function(input, output, session) {
   # Show the actual computed recipes in Column 3.
   output$Recipe <- renderUI({
     tables <- lapply(recipe(), function(r) {renderTable({
-      recipeDF <- data.frame(Amount = exactRound(r$weights, 2, 100))
+      Amount <- exactRound(r$weights, 2, 100)
       # Trim off any initial or trailing back-ticks from column names.
-      rownames(recipeDF) <- gsub("`$","",gsub("^`","",names(r$weights)))
+      Material <- gsub("`$","",gsub("^`","",names(r$weights)))
+      
+      MaterialLinks <- paste0("<a target=\"_blank\" href=\"https://glazy.org/materials/",material_index[Material],"/\">")
+      Material <- paste0(MaterialLinks,xtable::sanitize(Material,type="html"),
+                         "</a>")
+      recipeDF <- data.frame(Material, Amount)
       recipeDF
-      }, rownames = TRUE, width = "100%")})
+      }, rownames = FALSE, sanitize.text.function = function(x) x, width = "100%")})
     list(tables)
   })
 }

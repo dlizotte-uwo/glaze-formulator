@@ -1,0 +1,55 @@
+---
+header-includes:
+   - \usepackage{bm}
+   - \usepackage{siunitx}
+   - \usepackage{amsmath}
+output:
+  pdf_document: default
+  html_document: default
+---
+
+# Glaze Approximations
+
+\newcommand{\rc}{\ensuremath{\mathbf{r}}}
+\newcommand{\tg}{\ensuremath{\bm{\tau}}}
+\newcommand{\Mm}{\ensuremath{{M}}}
+\newcommand{\fl}{\ensuremath{\mathbf{f}}}
+\newcommand{\T}{\ensuremath{\mathsf{T}}}
+
+This software produces a glaze recipe from a given list of ingredients whose Unity Molecular Formula (UMF) approximates a given target UMF.
+
+To read this document, you will need to be familiar with basic linear algebra notation. A primer can be found here: http://www.cs.mcgill.ca/~dprecup/courses/ML/Materials/linalg-review.pdf
+
+Let $\Mm$ be a matrix with $n$ rows and $p$ columns, where $n$ is the number of oxides in the UMF, and $p$ is the number of ingredients in the recipe. The $(i,j)$th entry of $\Mm$ gives, for ingredient $j$, the number of moles of the $i$th oxide there is in $\SI{100}{\gram}$ of that ingredient. (The columns of this matrix can be computed by taking the percentage analysis for each ingredient and dividing each percentage by the appropriate molecular weight.) Let $\rc$ be a column vector of length $p$, representing a recipe where the amount of each ingredient is given in hectograms (multiples of \SI{100}{\gram}). Then the number of moles of each oxide in recipe $\rc$ is given by $\Mm \rc$.
+
+Let $\tg$ be a column vector of length $n$, where each value represents a number of moles of each corresponding oxide. We call this the \textit{target} vector; it represents the molar amounts that we would like our recipe to have.
+
+The \textit{sum of squared errors} between the number of moles of different oxides contained in a recipe $\rc$ and the number of moles of corresponding oxides in a target vector $\tg$ is given by
+
+$$
+(\Mm\rc - \tg)^\T (\Mm\rc - \tg) = \rc^\T\Mm^\T\Mm\rc - 2\tg^\T\Mm\rc + \tg^\T\tg
+$$
+
+The smaller the sum of squared errors, the ``closer" the molar formula for the recipe is to the target. Given this definition, we can find the recipe $\rc$ that has the minimum sum of squared errors by solving the following optimization problem:
+\begin{align*}
+\min_{\rc} ~ & \rc^\T\Mm^\T\Mm\rc - 2\tg^\T\Mm\rc + \tg^\T\tg \\
+\mbox{subject to} ~ & \rc \ge 0.
+\end{align*}
+The solution to this problem is a vector $\rc^*$ that produces the smallest sum of squared errors, subject to the constraint that the amounts in the recipe are all nonnegative. 
+
+Glaze analyses are often expressed as a Unity Molecular Formula, where the molar amounts are normalized so that the total moles of the oxides that are considered fluxes sum to $1$. Consider a column vector $\fl$ of length $n$ that has an entry for each oxide that is $1$ if the oxide is considered a flux, and $0$ otherwise. Then the sum of the moles of flux for a recipe $\rc$ is given by $\fl^\T \Mm \rc$. If we want to find the recipe whose UMF has the lowest sum of squared errors with respect to a target $\tg$, we can solve the following modified optimization problem:
+\begin{align*}
+\min_{\rc} ~ & \rc^\T\Mm^\T\Mm\rc - 2\tg^\T\Mm\rc + \tg^\T\tg \\
+\mbox{subject to} ~ & \rc \ge 0 \\
+ & \fl^\T \Mm \rc = 1.
+\end{align*}
+This problem finds the recipe with the smallest sum of squared errors, subject to an additional constraint that the fluxes in the recipe sum to 1. This is equivalent to finding a recipe whose UMF is as close to the target as possible in terms of squared error. Both of the optimization problems above are \textit{convex quadratic programs} that are easily solved with modern math libraries.
+
+If $\Mm^\T\Mm$ is positive definite, then the objective above is strictly convex, and there is a unique optimal $\rc$. If they are not, there may be multiple equally good solutions (recipes). As of December 2018, the glaze formulator uses the popular Goldfarb and Idnani algorithm for optimization, which is widely implemented. However, it requires a positive definite $\Mm^\T\Mm$ to work (and hence can only find a single unique solution) so if there is redudancy, we have to manage it outside this algorithm.
+
+The matrix $\Mm^\T\Mm$ is positive definite only if $\Mm$ has full column rank (that is, the columns of $\Mm$ are linearly independent). Finding the column rank of $\Mm$ is straightfoward by using rank-revealing QR decomposition.
+
+If $\Mm$ is found to not be full rank, we proceed as follows. First, we identify columns of $\Mm$ that are "redundant" in the sense that they are linear combinations of other columns of $\Mm$. The right null space of $\Mm$ is the space of all recipes, allowing negative amounts, that result in zero moles of every oxide. If any such recipes exist, this means that one or more columns of $\Mm$ can be written as a linear combination of other columns of $\Mm$. Columns of $\Mm$ (ingredients) that have non-zero coefficients in any recipe in the null space may be written as a linear combination of other columns, and are potentially redundant, meaning we might be able to remove that column (ingredient) and find an equally good recipe.
+
+We use QR decomposition of $\Mm^\T$ to find an orthogonal basis for the right null space of $\Mm$. Then, by looking at the non-zero coefficients of the recipes in the null space, we identify which columns are potentially redundant. We remove these columns one at a time and check the rank of the reduced matrix. If it has full rank, we compute the optimal recipe and record its squared error. If it doesn't, we apply our approach recursively to the smaller matrix. Sometimes, when a "redundant" column is eliminated, the resulting solutions are not optimal because of the constraint that the final computed recipes must have nonnegative amounts. So, as a final step, we eliminate any recipes produced in this process whose squared errors are not equal to the minimum squared error found.
+
