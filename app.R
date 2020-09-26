@@ -100,12 +100,15 @@ oxide.colour.styles <- HTML("\
 #Rows are materials
 materials <- readxl::read_excel("materials.xlsx")
 
+material_shortname <- materials$ShortName
+names(material_shortname) = materials$Ingredient
+
 material_index <- materials$ID
 names(material_index) = materials$Ingredient
 
 #Create matrix by removing non-numeric columns and transposing
 #Remove headers, transpose
-materials_wt_matrix <- t(materials[,c(-1,-2,-3)])
+materials_wt_matrix <- t(materials[,c(-1,-2,-3,-4)])
 #Missing values are actually zero
 materials_wt_matrix[is.na(materials_wt_matrix)] <- 0
 #Columns are now ingredients
@@ -746,7 +749,7 @@ server <- function(input, output, session) {
       Material <- gsub("`$","",gsub("^`","",names(r$weights)))
       
       MaterialLinks <- paste0("<a target=\"_blank\" href=\"https://glazy.org/materials/",material_index[Material],"/\">")
-      Material <- paste0(MaterialLinks,xtable::sanitize(Material,type="html"),
+      Material <- paste0(MaterialLinks,xtable::sanitize(material_shortname[Material],type="html"),
                          "</a>")
       recipeDF <- data.frame(Material, Amount)
       recipeDF
