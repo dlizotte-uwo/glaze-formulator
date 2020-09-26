@@ -427,9 +427,10 @@ ui <- function(request) {
     HTML('<p>Welcome to the Glaze Formulator! This application will take a target <a href="http://help.glazy.org/concepts/analysis/umf.html" target="_blank">unity molecular formula</a> 
            together with a list of materials to use, and it will produce a glaze recipe that approximates the target unity formula as closely as possible.
            Enter your desired target formula in the boxes under <b>Unity Formula</b> (there is a simple example formula to start from), then choose the materials you want 
-           using the box under <b>Materials</b> (you can type to search). Alternatively, you can upload a GlazeChem file to set the targets and the materials. You can export a GlazeChem file from Glazy. Your recipe will appear under <b>Recipe</b>, and its unity formula will appear under <b>Actual</b>. 
+           using the box under <b>Materials</b> (you can type to search). Alternatively, you can upload a GlazeChem file to set the targets and the materials. You can export a GlazeChem file from <a href="https://glazy.org/" target="_blank">Glazy</a>. 
+           Your recipe will appear under <b>Recipe</b>, and its unity formula will appear under <b>Actual</b>. 
            Large discrepancies between the <b>Target</b> unity formula and the <b>Actual</b> unity formula will be marked with a coloured box. You can approximate the example unity formula pretty well 
-           with EPK, Silica, Frit 3134, Neph Sy, and Whiting. Give it a try.</p>'),
+           with EP Kaolin, Silica, Frit 3134, Neph Sy, and Whiting. Give it a try.</p>'),
     tags$hr(style = "margin-top: 0px; margin-bottom:3px;"),
     # Inputs (Unity formula) on the left, Materials/ingredient choices in the middle, recipe on the right.
     fluidRow(
@@ -444,7 +445,7 @@ ui <- function(request) {
                           actionButton(inputId = "MaxInfluences", label = HTML("<span class=\"glyphicon glyphicon-fast-forward\" aria-hidden=\"true\"></span>"), width = "2em", style = "padding-left: 0; padding-right: 0;"))))),
                           tags$div(style = "width: 18em; display: inline-block; text-align: center;",
                                   actionButton(inputId = "NormalizeFluxes", label = "Normalize", width = "10em", style = "margin: auto; display: block; padding: 6px 6px;"),
-                                  myCheckboxInput(inputId = "KNaOBox", label = HTML('K <span class="glyphicon glyphicon-transfer" aria-hidden="true"></span> Na'), width = "6em"))),
+                                  myCheckboxInput(inputId = "KNaOBox", value = TRUE, label = HTML('K <span class="glyphicon glyphicon-transfer" aria-hidden="true"></span> Na'), width = "6em"))),
                 tags$div(style = "width: 26em; display: table;", 
                          span(HTML("<span class=\"glyphicon glyphicon-minus-sign\" aria-hidden=\"true\"></span> Influence <span class=\"glyphicon glyphicon-plus-sign\" aria-hidden=\"true\"></span>"),style = "display: inline-block; text-align: center; width: 8em; font-weight: 350;"),
                          HTML(paste0(
@@ -537,12 +538,22 @@ server <- function(input, output, session) {
       return()
     }
     
+    # "Expand" material names to full names
+    for(i in 1:length(all_materials)) {
+      m <- all_materials[i]
+      # Find material that starts with m ends with comma or EOS
+      loc <- grep(paste0("^",m,"(,|$)"), colnames(materials_mol_matrix))
+      if(loc) {
+        all_materials[i] <- colnames(materials_mol_matrix)[loc]
+      }
+    }
+    
     missing_materials <- setdiff(all_materials, colnames(materials_mol_matrix))
     # There are materials in the file that are not in our data
     if(length(missing_materials) > 0) {
       print(paste("Materials Missing:",missing_materials))
       print(missing_materials)
-      output$FileWarnings <- renderText(paste0("Unknown Materials: ",paste(missing_materials,collapse=", ")))
+      output$FileWarnings <- renderText(paste0("Cannot import. Unknown Materials: ",paste(missing_materials,collapse=", ")))
       return()
     } else {
       output$FileWarnings <- renderText("")
@@ -719,7 +730,7 @@ server <- function(input, output, session) {
                 runjs(jsCommand)
               } else {
                 #Recipe is NULL; blank out unity formula and turn off borders.
-                for(o in oxides) {
+                for(o in c(oxides,"KNaO")) {
                   oResult <- paste0(o, "Result")
                   jsCommand <- paste0("$('#",oResult,"').css({'border-style':'none','border-color':'white'});")
                   runjs(jsCommand)
